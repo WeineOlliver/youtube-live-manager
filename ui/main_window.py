@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 
 from core.youtube_api import get_token_status, refresh_token
 from core.state import load_config, save_config
+from ui.workers import CreateLivesWorker, ObsWatcherWorker
 
 DARK_STYLE = """
 QWidget {
@@ -72,6 +73,9 @@ def _title(text: str) -> QLabel:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._pending_ids: dict = {}
+        self._create_worker = None
+        self._obs_worker = None
         self.setWindowTitle("YouTube Live Manager")
         self.setFixedSize(960, 740)
         self.setStyleSheet(DARK_STYLE)
@@ -83,21 +87,27 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._save_state()
+        if self._create_worker is not None and self._create_worker.isRunning():
+            self._create_worker.quit()
+            self._create_worker.wait(3000)
+        if self._obs_worker is not None and self._obs_worker.isRunning():
+            self._obs_worker.stop()
+            self._obs_worker.wait(ObsWatcherWorker.POLL_INTERVAL_SECS * 1000 + 1000)
         super().closeEvent(event)
 
     # ── state ────────────────────────────────────────────────────────────────
 
     def _load_state(self):
         cfg = load_config()
-        self._title_input.setText(cfg["title"])
-        self._tags_input.setText(cfg["tags"])
-        self._thumb_normal_input.setText(cfg["thumbnail_normal"])
-        self._thumb_shorts_input.setText(cfg["thumbnail_shorts"])
-        self._desc_input.setPlainText(cfg["description"])
-        self._poll_fhd_q.setText(cfg["poll_fullhd_question"])
-        self._poll_fhd_opts.setPlainText(cfg["poll_fullhd_options"])
-        self._poll_shorts_q.setText(cfg["poll_shorts_question"])
-        self._poll_shorts_opts.setPlainText(cfg["poll_shorts_options"])
+        self._title_input.setText(cfg.get("title", ""))
+        self._tags_input.setText(cfg.get("tags", ""))
+        self._thumb_normal_input.setText(cfg.get("thumbnail_normal", ""))
+        self._thumb_shorts_input.setText(cfg.get("thumbnail_shorts", ""))
+        self._desc_input.setPlainText(cfg.get("description", ""))
+        self._poll_fhd_q.setText(cfg.get("poll_fullhd_question", ""))
+        self._poll_fhd_opts.setPlainText(cfg.get("poll_fullhd_options", ""))
+        self._poll_shorts_q.setText(cfg.get("poll_shorts_question", ""))
+        self._poll_shorts_opts.setPlainText(cfg.get("poll_shorts_options", ""))
         self._test_toggle.setChecked(cfg.get("test_mode", False))
 
     def _save_state(self):
@@ -161,6 +171,43 @@ class MainWindow(QMainWindow):
 
     def clear_log(self):
         self._log.clear()
+
+    def _on_create(self):
+        if self._create_worker is not None and self._create_worker.isRunning():
+            return
+        self.clear_log()
+        self.set_running(True)
+        self._save_state()
+        cfg = self.get_config()
+        self._create_worker = CreateLivesWorker(cfg)
+        self._create_worker.finished.connect(self._create_worker.deleteLater)
+        self._create_worker.log_line.connect(self.append_log)
+        self._create_worker.done.connect(self._on_lives_created)
+        self._create_worker.failed.connect(lambda: self.set_running(False))
+        self._create_worker.start()
+
+    def _on_lives_created(self, ids: dict):
+        self.append_log("✅ Lives criadas! Iniciando OBS watcher...")
+        self._obs_worker = ObsWatcherWorker(
+            stream_fhd_id=ids["stream_fhd_id"],
+            stream_shorts_id=ids["stream_shorts_id"],
+            bc_fhd_id=ids["bc_fhd_id"],
+            bc_shorts_id=ids["bc_shorts_id"],
+        )
+        self._obs_worker.finished.connect(self._obs_worker.deleteLater)
+        self._obs_worker.log_line.connect(self.append_log)
+        self._obs_worker.went_live.connect(self._on_went_live)
+        self._obs_worker.failed.connect(self._on_obs_failed)
+        self._obs_worker.start()
+
+    def _on_went_live(self):
+        self._obs_worker = None
+        self.set_running(False)
+
+    def _on_obs_failed(self, msg: str):
+        self.append_log(msg)
+        self._obs_worker = None
+        self.set_running(False)
 
     def set_running(self, running: bool):
         self._create_btn.setEnabled(not running)
@@ -278,12 +325,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._desc_input)
         return frame
 
-    def _build_poll_section(self, label: str, key: str, border_color: str) -> QFrame:
-        frame = QFrame()
-        frame.setStyleSheet(
-            f"QFrame {{ background-color: #1f2937; border-radius: 6px;"
-            f" border-left: 3px solid {border_color}; }}"
-        )
+    def _build_poll_section(self, label: str, key: str, border_color: str) -> QWidget:
+        """Build a poll config section with a colored left border bar."""
+        container = QWidget()
+        outer = QHBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        left_bar = QWidget()
+        left_bar.setFixedWidth(3)
+        left_bar.setStyleSheet(f"background-color: {border_color}; border-radius: 2px 0 0 2px;")
+        outer.addWidget(left_bar)
+
+        frame = QWidget()
+        frame.setStyleSheet("background-color: #1f2937; border-radius: 0 6px 6px 0;")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(4)
@@ -295,13 +350,18 @@ class MainWindow(QMainWindow):
         opts_input = QPlainTextEdit()
         opts_input.setFixedHeight(56)
         layout.addWidget(opts_input)
+        outer.addWidget(frame)
+
         if key == "fullhd":
             self._poll_fhd_q = q_input
             self._poll_fhd_opts = opts_input
-        else:
+        elif key == "shorts":
             self._poll_shorts_q = q_input
             self._poll_shorts_opts = opts_input
-        return frame
+        else:
+            raise ValueError(f"Unknown poll key: {key!r}")
+
+        return container
 
     def _build_actions_section(self) -> QFrame:
         frame = _section()
@@ -313,6 +373,7 @@ class MainWindow(QMainWindow):
         self._create_btn.setObjectName("create_btn")
         self._create_btn.setMinimumWidth(180)
         self._create_btn.setMinimumHeight(40)
+        self._create_btn.clicked.connect(self._on_create)
         layout.addWidget(self._create_btn)
         layout.addStretch()
         return frame
