@@ -1,0 +1,7 @@
+client-secret/
+__pycache__/
+*.pyc
+*.pickle
+.pytest_cache/
+venv/
+*.egg-info/

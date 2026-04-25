@@ -1,0 +1,2 @@
+- on test mode, create the options to delete live stream when testing.
+- create the option to abort, depending on whats going on in logs i would like to abort the livestream creation.
