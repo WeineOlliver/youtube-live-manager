@@ -10,12 +10,8 @@ DEFAULT_PROFILE = {
     "tags": "",
     "thumbnail_normal": "",
     "thumbnail_shorts": "",
-    "poll_fullhd_question": "",
-    "poll_fullhd_options": "",
-    "poll_shorts_question": "",
-    "poll_shorts_options": "",
-    "poll_fullhd_enabled": True,
-    "poll_shorts_enabled": True,
+    "enable_fhd": True,
+    "enable_shorts": True,
 }
 
 DEFAULT_CONFIG = {

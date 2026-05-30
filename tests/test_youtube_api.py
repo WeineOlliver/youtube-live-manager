@@ -9,6 +9,9 @@ from core.youtube_api import (
     update_tags,
     get_stream_status,
     transition_broadcast,
+    delete_broadcast,
+    delete_live_stream,
+    cleanup_resources,
 )
 
 
@@ -104,3 +107,55 @@ def test_update_tags_patches_snippet():
     update_tags(yt, "vid123", ["tag1", "tag2"])
     update_kwargs = yt.videos().update.call_args.kwargs
     assert update_kwargs["body"]["snippet"]["tags"] == ["tag1", "tag2"]
+
+
+def test_delete_broadcast_calls_api():
+    yt = _mock_youtube()
+    delete_broadcast(yt, "bc123")
+    yt.liveBroadcasts.return_value.delete.assert_called_once_with(id="bc123")
+    yt.liveBroadcasts.return_value.delete.return_value.execute.assert_called_once()
+
+
+def test_delete_live_stream_calls_api():
+    yt = _mock_youtube()
+    delete_live_stream(yt, "s123")
+    yt.liveStreams.return_value.delete.assert_called_once_with(id="s123")
+    yt.liveStreams.return_value.delete.return_value.execute.assert_called_once()
+
+
+def test_cleanup_resources_deletes_all_present():
+    yt = _mock_youtube()
+    ids = {
+        "bc_fhd_id": "bc1",
+        "bc_shorts_id": "bc2",
+        "stream_fhd_id": "s1",
+        "stream_shorts_id": "s2",
+    }
+    errors = cleanup_resources(yt, ids)
+    assert errors == []
+    assert yt.liveBroadcasts.return_value.delete.call_count == 2
+    assert yt.liveStreams.return_value.delete.call_count == 2
+
+
+def test_cleanup_resources_skips_missing_keys():
+    yt = _mock_youtube()
+    errors = cleanup_resources(yt, {"bc_fhd_id": "bc1"})
+    assert errors == []
+    yt.liveBroadcasts.return_value.delete.assert_called_once_with(id="bc1")
+    assert yt.liveStreams.return_value.delete.call_count == 0
+
+
+def test_cleanup_resources_returns_errors_on_failure():
+    yt = _mock_youtube()
+    yt.liveBroadcasts.return_value.delete.return_value.execute.side_effect = Exception("quota")
+    ids = {"bc_fhd_id": "bc1", "bc_shorts_id": "bc2"}
+    errors = cleanup_resources(yt, ids)
+    assert len(errors) == 2
+    assert "bc_fhd_id" in errors[0]
+    assert "bc_shorts_id" in errors[1]
+
+
+def test_cleanup_resources_empty_ids_returns_no_errors():
+    yt = _mock_youtube()
+    errors = cleanup_resources(yt, {})
+    assert errors == []

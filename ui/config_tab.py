@@ -5,8 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
-from core.youtube_api import get_token_status, refresh_token
-from ui.workers import CreateLivesWorker, ObsWatcherWorker
+from ui.workers import CreateLivesWorker
 
 _LABEL_STYLE = "color: #9ca3af; font-size: 10px;"
 _SECTION_TITLE_STYLE = "font-weight: bold; font-size: 12px;"
@@ -41,7 +40,6 @@ class ConfigTab(QWidget):
         super().__init__()
         self._pending_ids: dict = {}
         self._create_worker = None
-        self._obs_worker = None
         self._profile_data = profile_data
         self._global_config = global_config
         self._build_ui()
@@ -59,12 +57,6 @@ class ConfigTab(QWidget):
         layout.addLayout(grid)
 
         layout.addWidget(self._build_description_section())
-
-        poll_row = QHBoxLayout()
-        poll_row.setSpacing(8)
-        poll_row.addWidget(self._build_poll_section("Full HD", "fullhd", "#3b82f6"))
-        poll_row.addWidget(self._build_poll_section("Shorts", "shorts", "#f97316"))
-        layout.addLayout(poll_row)
 
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
@@ -131,60 +123,9 @@ class ConfigTab(QWidget):
         layout.setSpacing(4)
         layout.addWidget(_title("📝 Descrição"))
         self._desc_input = QPlainTextEdit()
-        self._desc_input.setFixedHeight(90)
+        self._desc_input.setFixedHeight(120)
         layout.addWidget(self._desc_input)
         return frame
-
-    def _build_poll_section(self, label: str, key: str, border_color: str) -> QWidget:
-        container = QWidget()
-        outer = QHBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        left_bar = QWidget()
-        left_bar.setFixedWidth(3)
-        left_bar.setStyleSheet(f"background-color: {border_color}; border-radius: 2px 0 0 2px;")
-        outer.addWidget(left_bar)
-
-        frame = QWidget()
-        frame.setStyleSheet("background-color: #1f2937; border-radius: 0 6px 6px 0;")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(4)
-
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.addWidget(_title(f"📊 Enquete — {label}"))
-        title_row.addStretch()
-        toggle = QCheckBox("Ativar")
-        toggle.setChecked(True)
-        title_row.addWidget(toggle)
-        layout.addLayout(title_row)
-
-        layout.addWidget(_label("Pergunta"))
-        q_input = QLineEdit()
-        layout.addWidget(q_input)
-        layout.addWidget(_label("Opções (uma por linha)"))
-        opts_input = QPlainTextEdit()
-        opts_input.setFixedHeight(56)
-        layout.addWidget(opts_input)
-        outer.addWidget(frame)
-
-        toggle.stateChanged.connect(
-            lambda: (q_input.setEnabled(toggle.isChecked()),
-                     opts_input.setEnabled(toggle.isChecked()))
-        )
-
-        if key == "fullhd":
-            self._poll_fhd_q = q_input
-            self._poll_fhd_opts = opts_input
-            self._poll_fhd_toggle = toggle
-        elif key == "shorts":
-            self._poll_shorts_q = q_input
-            self._poll_shorts_opts = opts_input
-            self._poll_shorts_toggle = toggle
-
-        return container
 
     def _build_actions_section(self) -> QFrame:
         frame = _section()
@@ -192,15 +133,24 @@ class ConfigTab(QWidget):
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(8)
         layout.addWidget(_title("🚀 Ações"))
-        self._create_btn = QPushButton("Criar Ambas as Lives")
+        
+        self._enable_fhd_toggle = QCheckBox("Incluir Full HD")
+        self._enable_fhd_toggle.setChecked(True)
+        layout.addWidget(self._enable_fhd_toggle)
+        
+        self._enable_shorts_toggle = QCheckBox("Incluir Shorts")
+        self._enable_shorts_toggle.setChecked(True)
+        layout.addWidget(self._enable_shorts_toggle)
+        
+        layout.addSpacing(4)
+        
+        self._create_btn = QPushButton("Criar Lives")
         self._create_btn.setObjectName("create_btn")
         self._create_btn.setMinimumWidth(180)
         self._create_btn.setMinimumHeight(40)
         self._create_btn.clicked.connect(self._on_create)
         layout.addWidget(self._create_btn)
         
-        # Note: Delete button visibility and enabled state should be handled by main window 
-        # based on global test_mode and per-tab pending_ids
         self._delete_btn = QPushButton("🗑️ Deletar Streams de Teste")
         self._delete_btn.setObjectName("delete_btn")
         self._delete_btn.setMinimumWidth(180)
@@ -230,12 +180,8 @@ class ConfigTab(QWidget):
         self._thumb_normal_input.setText(data.get("thumbnail_normal", ""))
         self._thumb_shorts_input.setText(data.get("thumbnail_shorts", ""))
         self._desc_input.setPlainText(data.get("description", ""))
-        self._poll_fhd_q.setText(data.get("poll_fullhd_question", ""))
-        self._poll_fhd_opts.setPlainText(data.get("poll_fullhd_options", ""))
-        self._poll_shorts_q.setText(data.get("poll_shorts_question", ""))
-        self._poll_shorts_opts.setPlainText(data.get("poll_shorts_options", ""))
-        self._poll_fhd_toggle.setChecked(data.get("poll_fullhd_enabled", True))
-        self._poll_shorts_toggle.setChecked(data.get("poll_shorts_enabled", True))
+        self._enable_fhd_toggle.setChecked(data.get("enable_fhd", True))
+        self._enable_shorts_toggle.setChecked(data.get("enable_shorts", True))
 
     def get_data(self) -> dict:
         return {
@@ -245,23 +191,13 @@ class ConfigTab(QWidget):
             "thumbnail_normal": self._thumb_normal_input.text(),
             "thumbnail_shorts": self._thumb_shorts_input.text(),
             "description": self._desc_input.toPlainText(),
-            "poll_fullhd_question": self._poll_fhd_q.text(),
-            "poll_fullhd_options": self._poll_fhd_opts.toPlainText(),
-            "poll_shorts_question": self._poll_shorts_q.text(),
-            "poll_shorts_options": self._poll_shorts_opts.toPlainText(),
-            "poll_fullhd_enabled": self._poll_fhd_toggle.isChecked(),
-            "poll_shorts_enabled": self._poll_shorts_toggle.isChecked(),
+            "enable_fhd": self._enable_fhd_toggle.isChecked(),
+            "enable_shorts": self._enable_shorts_toggle.isChecked(),
         }
 
     def get_config_for_worker(self) -> dict:
         data = self.get_data()
         data["tags"] = [t.strip() for t in data["tags"].split(",") if t.strip()]
-        data["poll_fullhd_options"] = [
-            o.strip() for o in data["poll_fullhd_options"].splitlines() if o.strip()
-        ]
-        data["poll_shorts_options"] = [
-            o.strip() for o in data["poll_shorts_options"].splitlines() if o.strip()
-        ]
         data["test_mode"] = self._global_config.get("test_mode", False)
         data["firefox_profile"] = self._global_config.get("firefox_profile", "")
         return data
@@ -270,6 +206,10 @@ class ConfigTab(QWidget):
         self._log.appendPlainText(line)
 
     def _on_create(self):
+        if not self._enable_fhd_toggle.isChecked() and not self._enable_shorts_toggle.isChecked():
+            self.append_log("⚠️ Selecione ao menos um tipo de live (FHD ou Shorts)")
+            return
+            
         if self._create_worker is not None and self._create_worker.isRunning():
             return
         self._log.clear()
@@ -287,7 +227,7 @@ class ConfigTab(QWidget):
         self.status_changed.emit()
 
     def _restore_create_button(self):
-        self._create_btn.setText("Criar Ambas as Lives")
+        self._create_btn.setText("Criar Lives")
         self._create_btn.clicked.disconnect()
         self._create_btn.clicked.connect(self._on_create)
         self._create_btn.setEnabled(True)
@@ -307,44 +247,8 @@ class ConfigTab(QWidget):
         self.status_changed.emit()
 
     def _on_lives_created(self, ids: dict):
-        self.append_log("✅ Lives criadas! Iniciando OBS watcher...")
+        self.append_log("✅ Lives criadas com sucesso!")
         self._pending_ids = ids
-        self._create_btn.setText("⛔ Parar Watcher")
-        self._create_btn.clicked.disconnect()
-        self._create_btn.clicked.connect(self._on_stop_obs)
-        self._obs_worker = ObsWatcherWorker(
-            stream_fhd_id=ids["stream_fhd_id"],
-            stream_shorts_id=ids["stream_shorts_id"],
-            bc_fhd_id=ids["bc_fhd_id"],
-            bc_shorts_id=ids["bc_shorts_id"],
-        )
-        self._obs_worker.finished.connect(self._obs_worker.deleteLater)
-        self._obs_worker.log_line.connect(self.append_log)
-        self._obs_worker.went_live.connect(self._on_went_live)
-        self._obs_worker.failed.connect(self._on_obs_failed)
-        self._obs_worker.stopped.connect(self._on_obs_stopped)
-        self._obs_worker.start()
-        self.status_changed.emit()
-
-    def _on_stop_obs(self):
-        self._create_btn.setEnabled(False)
-        if self._obs_worker is not None:
-            self._obs_worker.stop()
-
-    def _on_obs_stopped(self):
-        self.append_log("⛔ Watcher cancelado")
-        self._obs_worker = None
-        self._restore_create_button()
-        self.status_changed.emit()
-
-    def _on_went_live(self):
-        self._obs_worker = None
-        self._restore_create_button()
-        self.status_changed.emit()
-
-    def _on_obs_failed(self, msg: str):
-        self.append_log(msg)
-        self._obs_worker = None
         self._restore_create_button()
         self.status_changed.emit()
 
@@ -386,7 +290,3 @@ class ConfigTab(QWidget):
         if self._create_worker and self._create_worker.isRunning():
             self._create_worker.quit()
             self._create_worker.wait(3000)
-        if self._obs_worker and self._obs_worker.isRunning():
-            self._obs_worker.blockSignals(True)
-            self._obs_worker.stop()
-            self._obs_worker.wait(ObsWatcherWorker.POLL_INTERVAL_SECS * 1000 + 1000)

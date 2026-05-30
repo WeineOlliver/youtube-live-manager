@@ -155,3 +155,33 @@ def transition_broadcast(youtube, broadcast_id: str, status: str = "live") -> No
         id=broadcast_id,
         part="id,status",
     ).execute()
+
+
+def delete_broadcast(youtube, broadcast_id: str) -> None:
+    youtube.liveBroadcasts().delete(id=broadcast_id).execute()
+
+
+def delete_live_stream(youtube, stream_id: str) -> None:
+    youtube.liveStreams().delete(id=stream_id).execute()
+
+
+def cleanup_resources(youtube, ids: dict) -> list[str]:
+    """
+    Deletes any resources present in ids dict. Keys: bc_fhd_id, bc_shorts_id,
+    stream_fhd_id, stream_shorts_id. Missing keys are skipped safely.
+    Returns a list of error strings (empty list = all deleted successfully).
+    """
+    errors = []
+    for key, fn in [
+        ("bc_fhd_id",        lambda i: delete_broadcast(youtube, i)),
+        ("bc_shorts_id",     lambda i: delete_broadcast(youtube, i)),
+        ("stream_fhd_id",    lambda i: delete_live_stream(youtube, i)),
+        ("stream_shorts_id", lambda i: delete_live_stream(youtube, i)),
+    ]:
+        resource_id = ids.get(key)
+        if resource_id:
+            try:
+                fn(resource_id)
+            except Exception as e:
+                errors.append(f"{key}: {e}")
+    return errors

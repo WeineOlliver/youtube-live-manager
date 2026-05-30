@@ -110,12 +110,20 @@ class MainWindow(QMainWindow):
         self._tabs.setTabsClosable(True)
         self._tabs.tabCloseRequested.connect(self._on_close_tab)
         self._tabs.currentChanged.connect(self._on_tab_changed)
+        self._tabs.tabBarDoubleClicked.connect(self._on_rename_tab)
         
         self._add_btn = QPushButton("+ Novo Perfil")
         self._add_btn.clicked.connect(self._on_add_tab)
         self._tabs.setCornerWidget(self._add_btn, Qt.Corner.TopRightCorner)
         
         self._root.addWidget(self._tabs)
+
+    def _on_rename_tab(self, index: int):
+        old_name = self._tabs.tabText(index)
+        new_name, ok = QInputDialog.getText(self, "Renomear Perfil", "Novo Nome:", text=old_name)
+        if ok and new_name:
+            self._tabs.setTabText(index, new_name)
+            self._save_state()
 
     def _load_profiles(self):
         profiles = self._config.get("profiles", [])
