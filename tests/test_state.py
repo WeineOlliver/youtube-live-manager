@@ -1,6 +1,9 @@
 import json
 import pytest
-from core.state import load_config, save_config, DEFAULT_CONFIG, DEFAULT_PROFILE
+from core.state import (
+    load_config, save_config, load_stream_key, save_stream_key,
+    DEFAULT_CONFIG, DEFAULT_PROFILE,
+)
 
 
 def test_load_returns_defaults_when_no_file(tmp_path, monkeypatch):
@@ -59,3 +62,26 @@ def test_save_preserves_unicode(tmp_path, monkeypatch):
     save_config(data)
     loaded = load_config()
     assert loaded["profiles"][0]["description"] == "💚 Membro do Canal"
+
+
+def test_stream_key_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.state.STREAM_KEY_PATH", str(tmp_path / "stream_key.txt"))
+    save_stream_key("  abcd-efgh-ijkl  ")
+    assert load_stream_key() == "abcd-efgh-ijkl"
+
+
+def test_load_stream_key_empty_when_no_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.state.STREAM_KEY_PATH", str(tmp_path / "missing.txt"))
+    assert load_stream_key() == ""
+
+
+def test_save_stream_key_creates_parent_dir(tmp_path, monkeypatch):
+    path = tmp_path / "client-secret" / "stream_key.txt"
+    monkeypatch.setattr("core.state.STREAM_KEY_PATH", str(path))
+    save_stream_key("abcd")
+    assert path.read_text(encoding="utf-8") == "abcd"
+
+
+def test_default_profile_has_no_shorts_fields():
+    assert "enable_shorts" not in DEFAULT_PROFILE
+    assert "thumbnail_shorts" not in DEFAULT_PROFILE

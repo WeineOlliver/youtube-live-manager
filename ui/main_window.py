@@ -1,12 +1,14 @@
 """YouTube Live Manager — main application window."""
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QCheckBox, QTabWidget, QInputDialog
+    QLabel, QPushButton, QCheckBox, QTabWidget, QInputDialog, QLineEdit
 )
 from PyQt6.QtCore import Qt
 
 from core.youtube_api import get_token_status, refresh_token
-from core.state import load_config, save_config, DEFAULT_PROFILE
+from core.state import (
+    load_config, save_config, load_stream_key, save_stream_key, DEFAULT_PROFILE,
+)
 from ui.config_tab import ConfigTab
 
 DARK_STYLE = """
@@ -105,6 +107,22 @@ class MainWindow(QMainWindow):
         bar.addWidget(self._test_toggle)
         self._root.addLayout(bar)
 
+        # RTMP key row
+        key_row = QHBoxLayout()
+        key_row.setSpacing(8)
+        self._key_input = QLineEdit(load_stream_key())
+        self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_input.setPlaceholderText("Cole aqui a chave de transmissão criada no YouTube Studio")
+        self._key_input.editingFinished.connect(self._on_key_changed)
+        self._key_eye_btn = QPushButton("👁")
+        self._key_eye_btn.setFixedWidth(32)
+        self._key_eye_btn.setCheckable(True)
+        self._key_eye_btn.toggled.connect(self._on_toggle_key_visibility)
+        key_row.addWidget(QLabel("Chave RTMP:"))
+        key_row.addWidget(self._key_input)
+        key_row.addWidget(self._key_eye_btn)
+        self._root.addLayout(key_row)
+
         # Tabs
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
@@ -125,6 +143,13 @@ class MainWindow(QMainWindow):
             self._tabs.setTabText(index, new_name)
             self._save_state()
 
+    def _on_key_changed(self):
+        save_stream_key(self._key_input.text())
+
+    def _on_toggle_key_visibility(self, visible: bool):
+        mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        self._key_input.setEchoMode(mode)
+
     def _load_profiles(self):
         profiles = self._config.get("profiles", [])
         active_index = self._config.get("active_profile_index", 0)
@@ -136,7 +161,7 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentIndex(active_index)
 
     def _create_tab(self, profile_data: dict):
-        tab = ConfigTab(profile_data, self._config)
+        tab = ConfigTab(profile_data, self._config, self._key_input.text)
         tab.status_changed.connect(self._save_state)
         index = self._tabs.addTab(tab, profile_data.get("name", "Nova Live"))
         tab.update_test_mode(self._test_toggle.isChecked())
@@ -188,6 +213,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._save_state()
+        save_stream_key(self._key_input.text())
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if isinstance(tab, ConfigTab):

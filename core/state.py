@@ -1,7 +1,10 @@
 import json
 import os
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+# Kept in client-secret/ (git-ignored) so the RTMP key never gets committed.
+STREAM_KEY_PATH = os.path.join(BASE_DIR, "client-secret", "stream_key.txt")
 
 DEFAULT_PROFILE = {
     "name": "Nova Live",
@@ -9,9 +12,6 @@ DEFAULT_PROFILE = {
     "description": "",
     "tags": "",
     "thumbnail_normal": "",
-    "thumbnail_shorts": "",
-    "enable_fhd": True,
-    "enable_shorts": True,
 }
 
 DEFAULT_CONFIG = {
@@ -45,3 +45,16 @@ def load_config() -> dict:
 def save_config(data: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_stream_key() -> str:
+    if not os.path.exists(STREAM_KEY_PATH):
+        return ""
+    with open(STREAM_KEY_PATH, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def save_stream_key(key: str) -> None:
+    os.makedirs(os.path.dirname(STREAM_KEY_PATH), exist_ok=True)
+    with open(STREAM_KEY_PATH, "w", encoding="utf-8") as f:
+        f.write(key.strip())

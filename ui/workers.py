@@ -30,86 +30,54 @@ class CreateLivesWorker(QThread):
         if not errors:
             self.log_line.emit("✅ Recursos removidos com sucesso")
 
+    def _abort_if_requested(self, youtube) -> bool:
+        if not self._stop_requested:
+            return False
+        self._run_cleanup(youtube)
+        self.aborted.emit()
+        return True
+
     def run(self):
         cfg = self._cfg
         test = cfg["test_mode"]
-        resolution = "1080p" if test else "1440p"
         privacy = "private" if test else "public"
         latency = "ultraLow" if test else "low"
         self._created = {}
+
+        stream_key = cfg.get("stream_key", "").strip()
+        if not stream_key:
+            self.log_line.emit("⚠️ Informe a chave RTMP antes de criar a live")
+            self.failed.emit()
+            return
 
         youtube = None
         try:
             youtube = yt.get_youtube_client()
 
-            # Selective creation for Full HD
-            if cfg.get("enable_fhd", True):
-                self.log_line.emit("⏳ Criando stream Full HD...")
-                stream_fhd = yt.create_live_stream(youtube, yt.RTMP_STREAM_FULLHD, resolution)
-                self._created["stream_fhd_id"] = stream_fhd["id"]
-                self.log_line.emit(f"✅ Stream Full HD criado — ID: {stream_fhd['id']}")
-                if self._stop_requested:
-                    self._run_cleanup(youtube)
-                    self.aborted.emit()
-                    return
+            self.log_line.emit("⏳ Localizando chave RTMP na conta...")
+            stream_id = yt.find_stream_id_by_key(youtube, stream_key)
+            self.log_line.emit(f"✅ Chave RTMP encontrada — ID: {stream_id}")
+            if self._abort_if_requested(youtube):
+                return
 
-                title = cfg["title"]
-                desc = cfg["description"]
+            self.log_line.emit("⏳ Criando broadcast...")
+            bc = yt.create_broadcast(youtube, cfg["title"], cfg["description"], privacy, latency)
+            # Register before binding so a failed bind still gets rolled back.
+            self._created["bc_id"] = bc["id"]
+            yt.bind_broadcast(youtube, bc["id"], stream_id)
+            self.log_line.emit(f"✅ Broadcast criado e vinculado — ID: {bc['id']}")
+            if self._abort_if_requested(youtube):
+                return
 
-                self.log_line.emit("⏳ Criando broadcast Full HD...")
-                bc_fhd = yt.create_broadcast(youtube, title, desc, privacy, latency)
-                yt.bind_broadcast(youtube, bc_fhd["id"], stream_fhd["id"])
-                self._created["bc_fhd_id"] = bc_fhd["id"]
-                self.log_line.emit(f"✅ Broadcast Full HD criado — ID: {bc_fhd['id']}")
-                if self._stop_requested:
-                    self._run_cleanup(youtube)
-                    self.aborted.emit()
-                    return
+            self.log_line.emit("⏳ Enviando thumbnail...")
+            yt.upload_thumbnail(youtube, bc["id"], cfg["thumbnail_normal"])
+            self.log_line.emit("✅ Thumbnail enviada")
+            if self._abort_if_requested(youtube):
+                return
 
-                self.log_line.emit("⏳ Enviando thumbnail Full HD...")
-                yt.upload_thumbnail(youtube, bc_fhd["id"], cfg["thumbnail_normal"])
-                self.log_line.emit("✅ Thumbnail Full HD enviada")
-
-                self.log_line.emit("⏳ Atualizando tags Full HD...")
-                yt.update_tags(youtube, bc_fhd["id"], cfg["tags"])
-                self.log_line.emit("✅ Tags Full HD atualizadas")
-                if self._stop_requested:
-                    self._run_cleanup(youtube)
-                    self.aborted.emit()
-                    return
-
-            # Selective creation for Shorts
-            if cfg.get("enable_shorts", True):
-                self.log_line.emit("⏳ Criando stream Shorts...")
-                stream_shorts = yt.create_live_stream(youtube, yt.RTMP_STREAM_SHORTS, resolution)
-                self._created["stream_shorts_id"] = stream_shorts["id"]
-                self.log_line.emit(f"✅ Stream Shorts criado — ID: {stream_shorts['id']}")
-                if self._stop_requested:
-                    self._run_cleanup(youtube)
-                    self.aborted.emit()
-                    return
-
-                title = cfg["title"]
-                desc = cfg["description"]
-                title_shorts = f"{title} | SHORTS"
-                
-                self.log_line.emit("⏳ Criando broadcast Shorts...")
-                bc_shorts = yt.create_broadcast(youtube, title_shorts, desc, privacy, latency)
-                yt.bind_broadcast(youtube, bc_shorts["id"], stream_shorts["id"])
-                self._created["bc_shorts_id"] = bc_shorts["id"]
-                self.log_line.emit(f"✅ Broadcast Shorts criado — ID: {bc_shorts['id']}")
-                if self._stop_requested:
-                    self._run_cleanup(youtube)
-                    self.aborted.emit()
-                    return
-
-                self.log_line.emit("⏳ Enviando thumbnail Shorts...")
-                yt.upload_thumbnail(youtube, bc_shorts["id"], cfg["thumbnail_shorts"])
-                self.log_line.emit("✅ Thumbnail Shorts enviada")
-
-                self.log_line.emit("⏳ Atualizando tags Shorts...")
-                yt.update_tags(youtube, bc_shorts["id"], cfg["tags"])
-                self.log_line.emit("✅ Tags Shorts atualizadas")
+            self.log_line.emit("⏳ Atualizando tags...")
+            yt.update_tags(youtube, bc["id"], cfg["tags"])
+            self.log_line.emit("✅ Tags atualizadas")
 
         except Exception as e:
             self.log_line.emit(f"❌ Erro: {e}")
@@ -133,14 +101,14 @@ class DeleteResourcesWorker(QThread):
     def run(self):
         try:
             youtube = yt.get_youtube_client()
-            self.log_line.emit("🗑️ Deletando streams de teste...")
+            self.log_line.emit("🗑️ Deletando live de teste...")
             errors = yt.cleanup_resources(youtube, self._ids)
             for err in errors:
                 self.log_line.emit(f"⚠️ {err}")
             if errors:
                 self.failed.emit(f"{len(errors)} recurso(s) não puderam ser deletados")
             else:
-                self.log_line.emit("✅ Streams de teste deletados com sucesso")
+                self.log_line.emit("✅ Live de teste deletada com sucesso")
                 self.done.emit()
         except Exception as e:
             self.failed.emit(f"❌ Erro ao deletar: {e}")

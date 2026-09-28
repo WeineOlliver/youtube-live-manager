@@ -15,10 +15,6 @@ CLIENT_SECRETS_FILE = _secrets[0] if _secrets else None
 TOKEN_PATH = os.path.join(BASE_DIR, "client-secret", "token_youtube.pickle")
 SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 
-RTMP_STREAM_FULLHD = "RTMP_STREAM_FULLHD"
-RTMP_STREAM_SHORTS = "RTMP_STREAM_SHORTS"
-
-
 def get_token_status() -> tuple[bool, str]:
     """Returns (is_valid, display_label) for the top bar."""
     if not os.path.exists(TOKEN_PATH):
@@ -68,19 +64,23 @@ def get_youtube_client():
     return build("youtube", "v3", credentials=creds)
 
 
-def create_live_stream(youtube, name: str, resolution: str = "1440p") -> dict:
-    """Create an RTMP live stream resource and return the stream dict."""
-    return youtube.liveStreams().insert(
-        part="snippet,cdn",
-        body={
-            "snippet": {"title": name},
-            "cdn": {
-                "frameRate": "60fps",
-                "ingestionType": "rtmp",
-                "resolution": resolution,
-            },
-        },
-    ).execute()
+def find_stream_id_by_key(youtube, stream_key: str) -> str:
+    """Return the ID of the account's live stream whose RTMP key matches stream_key."""
+    stream_key = stream_key.strip()
+    page_token = None
+    while True:
+        response = youtube.liveStreams().list(
+            part="id,cdn",
+            mine=True,
+            maxResults=50,
+            pageToken=page_token,
+        ).execute()
+        for item in response.get("items", []):
+            if item["cdn"]["ingestionInfo"]["streamName"] == stream_key:
+                return item["id"]
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            raise ValueError("Chave RTMP não encontrada na conta")
 
 
 def create_broadcast(
@@ -161,27 +161,16 @@ def delete_broadcast(youtube, broadcast_id: str) -> None:
     youtube.liveBroadcasts().delete(id=broadcast_id).execute()
 
 
-def delete_live_stream(youtube, stream_id: str) -> None:
-    youtube.liveStreams().delete(id=stream_id).execute()
-
-
 def cleanup_resources(youtube, ids: dict) -> list[str]:
     """
-    Deletes any resources present in ids dict. Keys: bc_fhd_id, bc_shorts_id,
-    stream_fhd_id, stream_shorts_id. Missing keys are skipped safely.
-    Returns a list of error strings (empty list = all deleted successfully).
+    Deletes the broadcast in ids["bc_id"], if present. The fixed RTMP stream is
+    never deleted. Returns a list of error strings (empty list = success).
     """
     errors = []
-    for key, fn in [
-        ("bc_fhd_id",        lambda i: delete_broadcast(youtube, i)),
-        ("bc_shorts_id",     lambda i: delete_broadcast(youtube, i)),
-        ("stream_fhd_id",    lambda i: delete_live_stream(youtube, i)),
-        ("stream_shorts_id", lambda i: delete_live_stream(youtube, i)),
-    ]:
-        resource_id = ids.get(key)
-        if resource_id:
-            try:
-                fn(resource_id)
-            except Exception as e:
-                errors.append(f"{key}: {e}")
+    broadcast_id = ids.get("bc_id")
+    if broadcast_id:
+        try:
+            delete_broadcast(youtube, broadcast_id)
+        except Exception as e:
+            errors.append(f"bc_id: {e}")
     return errors
