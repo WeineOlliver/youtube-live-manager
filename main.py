@@ -17,18 +17,14 @@ def _excepthook(exc_type, exc, tb):
     sys.stderr.write(details)
     try:
         with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"
-[{datetime.now():%Y-%m-%d %H:%M:%S}]
-{details}")
+            f.write(f"\n[{datetime.now():%Y-%m-%d %H:%M:%S}]\n{details}")
     except OSError:
         pass
     if QApplication.instance() is not None:
         QMessageBox.critical(
             None,
             "Erro inesperado",
-            f"{exc_type.__name__}: {exc}
-
-O app continua aberto. Detalhes em error.log",
+            f"{exc_type.__name__}: {exc}\n\nO app continua aberto. Detalhes em error.log",
         )
 
 
