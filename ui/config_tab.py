@@ -1,11 +1,16 @@
 """Reusable configuration tab widget."""
+import html
+import re
+
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QCheckBox, QLineEdit, QPlainTextEdit, QFileDialog, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QCheckBox, QLineEdit, QPlainTextEdit, QTextBrowser, QFileDialog, QFrame, QMessageBox,
 )
 from PyQt6.QtCore import pyqtSignal
 
-from ui.workers import CreateLivesWorker
+from ui.workers import CreateLivesWorker, DeleteResourcesWorker
+
+_URL_RE = re.compile(r"https?://\S+")
 
 _LABEL_STYLE = "color: #9ca3af; font-size: 10px;"
 _SECTION_TITLE_STYLE = "font-weight: bold; font-size: 12px;"
@@ -39,8 +44,9 @@ class ConfigTab(QWidget):
     def __init__(self, profile_data: dict, global_config: dict, stream_key_provider):
         super().__init__()
         self._stream_key_provider = stream_key_provider
-        self._pending_ids: dict = {}
+        self._pending_ids: list[dict] = []
         self._create_worker = None
+        self._delete_worker = None
         self._profile_data = profile_data
         self._global_config = global_config
         self._build_ui()
@@ -168,8 +174,8 @@ class ConfigTab(QWidget):
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(4)
         layout.addWidget(_title("📟 Status"))
-        self._log = QPlainTextEdit()
-        self._log.setReadOnly(True)
+        self._log = QTextBrowser()
+        self._log.setOpenExternalLinks(True)
         self._log.setStyleSheet(_LOG_STYLE)
         self._log.setMinimumHeight(100)
         layout.addWidget(self._log)
@@ -207,14 +213,35 @@ class ConfigTab(QWidget):
         return data
 
     def append_log(self, line: str):
-        self._log.appendPlainText(line)
+        escaped = html.escape(line)
+        linked = _URL_RE.sub(
+            lambda m: f'<a href="{m.group(0)}" style="color:#60a5fa;">{m.group(0)}</a>', escaped
+        )
+        self._log.append(linked)
+
+    def _on_create_worker_finished(self):
+        # Drop our reference before Qt deletes the C++ object, or the next
+        # isRunning() call raises RuntimeError and PyQt aborts the app.
+        self._create_worker = None
+        self._refresh_delete_btn()
+
+    def _on_delete_worker_finished(self):
+        self._delete_worker = None
+        self._refresh_delete_btn()
+
+    def _refresh_delete_btn(self):
+        test_mode = self._global_config.get("test_mode", False)
+        busy = self._create_worker is not None or self._delete_worker is not None
+        self._delete_btn.setVisible(test_mode)
+        self._delete_btn.setEnabled(test_mode and bool(self._pending_ids) and not busy)
 
     def _on_create(self):
-        if self._create_worker is not None and self._create_worker.isRunning():
+        if self._create_worker is not None or self._delete_worker is not None:
             return
         self._log.clear()
         cfg = self.get_config_for_worker()
         self._create_worker = CreateLivesWorker(cfg)
+        self._create_worker.finished.connect(self._on_create_worker_finished)
         self._create_worker.finished.connect(self._create_worker.deleteLater)
         self._create_worker.log_line.connect(self.append_log)
         self._create_worker.done.connect(self._on_lives_created)
@@ -224,6 +251,7 @@ class ConfigTab(QWidget):
         self._create_btn.setText("⛔ Cancelar")
         self._create_btn.clicked.disconnect()
         self._create_btn.clicked.connect(self._on_cancel)
+        self._refresh_delete_btn()
         self.status_changed.emit()
 
     def _restore_create_button(self):
@@ -248,31 +276,33 @@ class ConfigTab(QWidget):
 
     def _on_lives_created(self, ids: dict):
         self.append_log("✅ Lives criadas com sucesso!")
-        self._pending_ids = ids
+        self._pending_ids.append(ids)
         self._restore_create_button()
         self.status_changed.emit()
 
     def _on_delete_streams(self):
-        from PyQt6.QtWidgets import QMessageBox
+        if self._create_worker is not None or self._delete_worker is not None:
+            return
         reply = QMessageBox.question(
             self,
             "Confirmar exclusão",
             f"Tem certeza que deseja deletar as lives de teste de '{self._profile_data['name']}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.StandardButton.Yes:
-            from ui.workers import DeleteResourcesWorker
-            self._delete_btn.setEnabled(False)
-            self._create_btn.setEnabled(False)
-            worker = DeleteResourcesWorker(self._pending_ids)
-            worker.finished.connect(worker.deleteLater)
-            worker.log_line.connect(self.append_log)
-            worker.done.connect(self._on_delete_done)
-            worker.failed.connect(self._on_delete_failed)
-            worker.start()
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._create_btn.setEnabled(False)
+        self._delete_worker = DeleteResourcesWorker(self._pending_ids)
+        self._delete_worker.finished.connect(self._on_delete_worker_finished)
+        self._delete_worker.finished.connect(self._delete_worker.deleteLater)
+        self._delete_worker.log_line.connect(self.append_log)
+        self._delete_worker.done.connect(self._on_delete_done)
+        self._delete_worker.failed.connect(self._on_delete_failed)
+        self._delete_worker.start()
+        self._refresh_delete_btn()
 
     def _on_delete_done(self):
-        self._pending_ids = {}
+        self._pending_ids = []
         self._restore_create_button()
         self.status_changed.emit()
 
@@ -283,10 +313,14 @@ class ConfigTab(QWidget):
 
     def update_test_mode(self, test_mode: bool):
         self._global_config["test_mode"] = test_mode
-        self._delete_btn.setVisible(test_mode)
-        self._delete_btn.setEnabled(test_mode and bool(self._pending_ids))
+        self._refresh_delete_btn()
 
     def stop_all(self):
-        if self._create_worker and self._create_worker.isRunning():
-            self._create_worker.quit()
-            self._create_worker.wait(3000)
+        """Block until background work ends; a QThread destroyed while running aborts the app."""
+        if self._create_worker is not None:
+            self._create_worker.request_stop()
+            self._create_worker.wait()
+            self._create_worker = None
+        if self._delete_worker is not None:
+            self._delete_worker.wait()
+            self._delete_worker = None

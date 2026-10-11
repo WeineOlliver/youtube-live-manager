@@ -1,4 +1,6 @@
 """QThread workers for background YouTube API operations."""
+import os
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core import youtube_api as yt
@@ -54,6 +56,7 @@ class CreateLivesWorker(QThread):
         self._created[kind["id_key"]] = bc["id"]
         yt.bind_broadcast(youtube, bc["id"], stream_id)
         self.log_line.emit(f"✅ Broadcast {label} criado e vinculado — ID: {bc['id']}")
+        self.log_line.emit(f"🔗 Studio {label}: {yt.studio_url(bc['id'])}")
         if self._abort_if_requested(youtube):
             return False
 
@@ -102,6 +105,11 @@ class CreateLivesWorker(QThread):
             self.log_line.emit(f"⚠️ Informe a chave RTMP {', '.join(missing)} antes de criar")
             self.failed.emit()
             return
+        bad_thumbs = [k["label"] for k in kinds if not os.path.isfile(k["thumbnail"])]
+        if bad_thumbs:
+            self.log_line.emit(f"⚠️ Thumbnail {', '.join(bad_thumbs)} não encontrada — confira o caminho")
+            self.failed.emit()
+            return
 
         youtube = None
         try:
@@ -110,7 +118,7 @@ class CreateLivesWorker(QThread):
                 if not self._create_live(youtube, kind, privacy, latency):
                     return
         except Exception as e:
-            self.log_line.emit(f"❌ Erro: {e}")
+            self.log_line.emit(f"❌ Erro: {yt.describe_error(e)}")
             if youtube is not None:
                 self._run_cleanup(youtube)
             self.failed.emit()
@@ -124,15 +132,17 @@ class DeleteResourcesWorker(QThread):
     done = pyqtSignal()
     failed = pyqtSignal(str)
 
-    def __init__(self, ids: dict):
+    def __init__(self, id_batches: list[dict]):
         super().__init__()
-        self._ids = ids
+        self._id_batches = id_batches
 
     def run(self):
         try:
             youtube = yt.get_youtube_client()
             self.log_line.emit("🗑️ Deletando lives de teste...")
-            errors = yt.cleanup_resources(youtube, self._ids)
+            errors = []
+            for ids in self._id_batches:
+                errors += yt.cleanup_resources(youtube, ids)
             for err in errors:
                 self.log_line.emit(f"⚠️ {err}")
             if errors:
@@ -141,4 +151,16 @@ class DeleteResourcesWorker(QThread):
                 self.log_line.emit("✅ Lives de teste deletadas com sucesso")
                 self.done.emit()
         except Exception as e:
-            self.failed.emit(f"❌ Erro ao deletar: {e}")
+            self.failed.emit(f"❌ Erro ao deletar: {yt.describe_error(e)}")
+
+
+class RenewTokenWorker(QThread):
+    """Runs the OAuth refresh/login off the UI thread so the window never freezes."""
+    done = pyqtSignal(bool, str)
+
+    def run(self):
+        try:
+            ok, msg = yt.refresh_token()
+        except Exception as e:
+            ok, msg = False, f"Erro ao renovar: {yt.describe_error(e)}"
+        self.done.emit(ok, msg)

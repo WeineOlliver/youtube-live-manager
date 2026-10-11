@@ -4,9 +4,11 @@ import os
 import pickle
 from datetime import datetime, timedelta, timezone
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -14,13 +16,36 @@ _secrets = glob.glob(os.path.join(BASE_DIR, "client-secret", "client_secret_*.js
 CLIENT_SECRETS_FILE = _secrets[0] if _secrets else None
 TOKEN_PATH = os.path.join(BASE_DIR, "client-secret", "token_youtube.pickle")
 SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
+OAUTH_TIMEOUT_SECONDS = 180
+
+
+def studio_url(broadcast_id: str) -> str:
+    return f"https://studio.youtube.com/video/{broadcast_id}/livestreaming"
+
+
+def describe_error(exc: Exception) -> str:
+    """Turn API/auth exceptions into a short message for the log."""
+    if isinstance(exc, HttpError):
+        status = getattr(exc.resp, "status", "?")
+        reason = getattr(exc, "reason", None) or str(exc)
+        return f"YouTube API {status}: {reason}"
+    if isinstance(exc, RefreshError):
+        return "Token expirado ou revogado — clique em 'Renovar' para autenticar de novo"
+    return str(exc) or type(exc).__name__
+
+
+def _load_creds():
+    with open(TOKEN_PATH, "rb") as f:
+        return pickle.load(f)
 
 def get_token_status() -> tuple[bool, str]:
     """Returns (is_valid, display_label) for the top bar."""
     if not os.path.exists(TOKEN_PATH):
         return False, "Token não encontrado"
-    with open(TOKEN_PATH, "rb") as f:
-        creds = pickle.load(f)
+    try:
+        creds = _load_creds()
+    except Exception:
+        return False, "Token corrompido — clique em 'Renovar'"
     if creds.valid:
         if creds.expiry:
             # google-auth stores expiry as naive UTC; compare with utcnow()
@@ -37,14 +62,23 @@ def refresh_token() -> tuple[bool, str]:
         return False, "Arquivo client_secret_*.json não encontrado em client-secret/"
     creds = None
     if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, "rb") as f:
-            creds = pickle.load(f)
+        try:
+            creds = _load_creds()
+        except Exception:
+            creds = None
 
+    refreshed = False
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-    else:
+        try:
+            creds.refresh(Request())
+            refreshed = True
+        except RefreshError:
+            pass  # refresh token revoked/expired: fall through to a fresh login
+    if not refreshed:
         flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
-        creds = flow.run_local_server(port=53999)
+        creds = flow.run_local_server(port=53999, timeout_seconds=OAUTH_TIMEOUT_SECONDS)
+        if creds is None:
+            return False, "Login não concluído no navegador (tempo esgotado)"
 
     with open(TOKEN_PATH, "wb") as f:
         pickle.dump(creds, f)
@@ -55,8 +89,10 @@ def get_youtube_client():
     """Return an authenticated YouTube API v3 client."""
     if not os.path.exists(TOKEN_PATH):
         raise FileNotFoundError("Token não encontrado. Use 'Renovar' para autenticar.")
-    with open(TOKEN_PATH, "rb") as f:
-        creds = pickle.load(f)
+    try:
+        creds = _load_creds()
+    except Exception:
+        raise ValueError("Token corrompido. Use 'Renovar' para autenticar.")
     if not creds.valid and creds.expired and creds.refresh_token:
         creds.refresh(Request())
         with open(TOKEN_PATH, "wb") as f:
@@ -76,7 +112,8 @@ def find_stream_id_by_key(youtube, stream_key: str) -> str:
             pageToken=page_token,
         ).execute()
         for item in response.get("items", []):
-            if item["cdn"]["ingestionInfo"]["streamName"] == stream_key:
+            ingestion = item.get("cdn", {}).get("ingestionInfo", {})
+            if ingestion.get("streamName") == stream_key:
                 return item["id"]
         page_token = response.get("nextPageToken")
         if not page_token:
@@ -172,6 +209,10 @@ def cleanup_resources(youtube, ids: dict) -> list[str]:
         if broadcast_id:
             try:
                 delete_broadcast(youtube, broadcast_id)
+            except HttpError as e:
+                # 404 = already removed (e.g. deleted by hand in Studio).
+                if getattr(e.resp, "status", None) != 404:
+                    errors.append(f"{key}: {describe_error(e)}")
             except Exception as e:
-                errors.append(f"{key}: {e}")
+                errors.append(f"{key}: {describe_error(e)}")
     return errors

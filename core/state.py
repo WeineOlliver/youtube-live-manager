@@ -28,8 +28,13 @@ DEFAULT_CONFIG = {
 
 def load_config() -> dict:
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            # Keep the broken file for manual recovery instead of overwriting it.
+            os.replace(CONFIG_PATH, CONFIG_PATH + ".corrompido")
+            return DEFAULT_CONFIG.copy()
         
         # Migration: if 'profiles' is missing, it's an old config
         if "profiles" not in data:
@@ -47,8 +52,11 @@ def load_config() -> dict:
 
 
 def save_config(data: dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    # Write-then-rename so a crash mid-save never leaves a truncated config.
+    tmp_path = CONFIG_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, CONFIG_PATH)
 
 
 def _stream_key_path(kind: str) -> str:

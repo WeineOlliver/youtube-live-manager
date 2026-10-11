@@ -6,3 +6,6 @@ __pycache__/
 venv/
 *.egg-info/
 .claude/
+error.log
+config.json.tmp
+config.json.corrompido

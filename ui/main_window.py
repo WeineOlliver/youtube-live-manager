@@ -5,11 +5,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from core.youtube_api import get_token_status, refresh_token
+from core.youtube_api import get_token_status
 from core.state import (
     load_config, save_config, load_stream_key, save_stream_key, DEFAULT_PROFILE,
 )
 from ui.config_tab import ConfigTab
+from ui.workers import RenewTokenWorker
 
 DARK_STYLE = """
 QWidget {
@@ -73,9 +74,13 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_STYLE)
         
         self._config = load_config()
+        self._renew_worker = None
+        self._loading = True
         self._build_ui()
         self._refresh_token_status()
         self._load_profiles()
+        self._loading = False
+        self._save_state()
 
     def _build_ui(self):
         central = QWidget()
@@ -205,6 +210,10 @@ class MainWindow(QMainWindow):
         self._save_state()
 
     def _save_state(self):
+        # Tabs emit currentChanged while being added; saving then would write a
+        # config with only some of the profiles.
+        if self._loading:
+            return
         profiles = []
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
@@ -226,6 +235,8 @@ class MainWindow(QMainWindow):
             tab = self._tabs.widget(i)
             if isinstance(tab, ConfigTab):
                 tab.stop_all()
+        if self._renew_worker is not None:
+            self._renew_worker.wait()
         super().closeEvent(event)
 
     def _refresh_token_status(self):
@@ -235,10 +246,23 @@ class MainWindow(QMainWindow):
         self._token_dot.setStyleSheet(f"color: {color};")
 
     def _on_renew(self):
-        try:
-            refresh_token()
-        except Exception as exc:
-            self._token_label.setText(f"Erro ao renovar: {exc}")
-            self._token_dot.setStyleSheet("color: #ef4444;")
+        if self._renew_worker is not None:
             return
-        self._refresh_token_status()
+        self._renew_btn.setEnabled(False)
+        self._token_label.setText("Aguardando login no navegador...")
+        self._renew_worker = RenewTokenWorker()
+        self._renew_worker.done.connect(self._on_renew_done)
+        self._renew_worker.finished.connect(self._on_renew_finished)
+        self._renew_worker.finished.connect(self._renew_worker.deleteLater)
+        self._renew_worker.start()
+
+    def _on_renew_done(self, ok: bool, msg: str):
+        if ok:
+            self._refresh_token_status()
+        else:
+            self._token_label.setText(msg)
+            self._token_dot.setStyleSheet("color: #ef4444;")
+
+    def _on_renew_finished(self):
+        self._renew_worker = None
+        self._renew_btn.setEnabled(True)

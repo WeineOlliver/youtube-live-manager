@@ -95,3 +95,19 @@ def test_shorts_stream_key_is_stored_separately(tmp_path, monkeypatch):
     save_stream_key("shorts-key", "shorts")
     assert load_stream_key() == "fhd-key"
     assert load_stream_key("shorts") == "shorts-key"
+
+
+def test_corrupt_config_is_kept_aside_and_defaults_returned(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{ quebrado", encoding="utf-8")
+    monkeypatch.setattr("core.state.CONFIG_PATH", str(cfg))
+    assert load_config() == DEFAULT_CONFIG
+    assert (tmp_path / "config.json.corrompido").read_text(encoding="utf-8") == "{ quebrado"
+
+
+def test_save_config_leaves_no_temp_file(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    monkeypatch.setattr("core.state.CONFIG_PATH", str(cfg))
+    save_config({"profiles": []})
+    assert json.loads(cfg.read_text(encoding="utf-8")) == {"profiles": []}
+    assert not (tmp_path / "config.json.tmp").exists()

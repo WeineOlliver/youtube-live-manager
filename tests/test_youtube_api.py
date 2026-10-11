@@ -13,7 +13,17 @@ from core.youtube_api import (
     delete_broadcast,
     find_stream_id_by_key,
     cleanup_resources,
+    describe_error,
+    studio_url,
 )
+import httplib2
+import json
+from googleapiclient.errors import HttpError
+
+
+def _http_error(status, message="boom"):
+    resp = httplib2.Response({"status": status})
+    return HttpError(resp, json.dumps({"error": {"message": message}}).encode())
 
 
 class _FakeCreds:
@@ -176,3 +186,34 @@ def test_find_stream_id_by_key_raises_when_missing():
     yt.liveStreams().list().execute.return_value = {"items": [_stream("s1", "aaaa-bbbb")]}
     with pytest.raises(ValueError, match="não encontrada"):
         find_stream_id_by_key(yt, "zzzz-zzzz")
+
+
+def test_cleanup_resources_treats_404_as_already_deleted():
+    yt = _mock_youtube()
+    yt.liveBroadcasts.return_value.delete.return_value.execute.side_effect = _http_error(404)
+    assert cleanup_resources(yt, {"bc_fhd_id": "bc1"}) == []
+
+
+def test_describe_error_formats_http_error():
+    assert describe_error(_http_error(403, "quota exceeded")) == "YouTube API 403: quota exceeded"
+
+
+def test_studio_url():
+    assert studio_url("abc") == "https://studio.youtube.com/video/abc/livestreaming"
+
+
+def test_find_stream_id_by_key_skips_streams_without_ingestion_info():
+    yt = _mock_youtube()
+    yt.liveStreams().list().execute.return_value = {
+        "items": [{"id": "s0", "cdn": {}}, _stream("s1", "aaaa-bbbb")]
+    }
+    assert find_stream_id_by_key(yt, "aaaa-bbbb") == "s1"
+
+
+def test_get_token_status_handles_corrupt_token(tmp_path, monkeypatch):
+    token = tmp_path / "token.pickle"
+    token.write_bytes(b"not a pickle")
+    monkeypatch.setattr("core.youtube_api.TOKEN_PATH", str(token))
+    ok, label = get_token_status()
+    assert ok is False
+    assert "corrompido" in label
