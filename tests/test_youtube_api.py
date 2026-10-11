@@ -1,14 +1,18 @@
 import pickle
+
+import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 from core.youtube_api import (
     get_token_status,
-    create_live_stream,
     create_broadcast,
     bind_broadcast,
     update_tags,
     get_stream_status,
     transition_broadcast,
+    delete_broadcast,
+    find_stream_id_by_key,
+    cleanup_resources,
 )
 
 
@@ -61,15 +65,6 @@ def _mock_youtube():
     return MagicMock()
 
 
-def test_create_live_stream_calls_insert():
-    yt = _mock_youtube()
-    yt.liveStreams().insert().execute.return_value = {"id": "stream123"}
-    create_live_stream(yt, "RTMP_STREAM_FULLHD", resolution="1440p")
-    call_kwargs = yt.liveStreams().insert.call_args.kwargs
-    assert call_kwargs["body"]["cdn"]["resolution"] == "1440p"
-    assert call_kwargs["body"]["snippet"]["title"] == "RTMP_STREAM_FULLHD"
-
-
 def test_create_broadcast_privacy_and_latency():
     yt = _mock_youtube()
     yt.liveBroadcasts().insert().execute.return_value = {"id": "bc456"}
@@ -104,3 +99,80 @@ def test_update_tags_patches_snippet():
     update_tags(yt, "vid123", ["tag1", "tag2"])
     update_kwargs = yt.videos().update.call_args.kwargs
     assert update_kwargs["body"]["snippet"]["tags"] == ["tag1", "tag2"]
+
+
+def test_delete_broadcast_calls_api():
+    yt = _mock_youtube()
+    delete_broadcast(yt, "bc123")
+    yt.liveBroadcasts.return_value.delete.assert_called_once_with(id="bc123")
+    yt.liveBroadcasts.return_value.delete.return_value.execute.assert_called_once()
+
+
+def test_cleanup_resources_deletes_both_broadcasts():
+    yt = _mock_youtube()
+    errors = cleanup_resources(yt, {"bc_fhd_id": "bc1", "bc_shorts_id": "bc2"})
+    assert errors == []
+    deleted = [c.kwargs["id"] for c in yt.liveBroadcasts.return_value.delete.call_args_list]
+    assert deleted == ["bc1", "bc2"]
+
+
+def test_cleanup_resources_skips_missing_keys():
+    yt = _mock_youtube()
+    errors = cleanup_resources(yt, {"bc_shorts_id": "bc2"})
+    assert errors == []
+    yt.liveBroadcasts.return_value.delete.assert_called_once_with(id="bc2")
+
+
+def test_cleanup_resources_never_deletes_stream():
+    yt = _mock_youtube()
+    cleanup_resources(yt, {"bc_fhd_id": "bc1", "stream_id": "s1"})
+    assert yt.liveStreams.return_value.delete.call_count == 0
+
+
+def test_cleanup_resources_returns_errors_on_failure():
+    yt = _mock_youtube()
+    yt.liveBroadcasts.return_value.delete.return_value.execute.side_effect = Exception("quota")
+    errors = cleanup_resources(yt, {"bc_fhd_id": "bc1", "bc_shorts_id": "bc2"})
+    assert len(errors) == 2
+    assert "bc_fhd_id" in errors[0]
+    assert "bc_shorts_id" in errors[1]
+
+
+def test_cleanup_resources_empty_ids_returns_no_errors():
+    yt = _mock_youtube()
+    errors = cleanup_resources(yt, {})
+    assert errors == []
+
+
+def _stream(stream_id, key):
+    return {"id": stream_id, "cdn": {"ingestionInfo": {"streamName": key}}}
+
+
+def test_find_stream_id_by_key_returns_matching_id():
+    yt = _mock_youtube()
+    yt.liveStreams().list().execute.return_value = {
+        "items": [_stream("s1", "aaaa-bbbb"), _stream("s2", "cccc-dddd")]
+    }
+    assert find_stream_id_by_key(yt, "cccc-dddd") == "s2"
+
+
+def test_find_stream_id_by_key_strips_whitespace():
+    yt = _mock_youtube()
+    yt.liveStreams().list().execute.return_value = {"items": [_stream("s1", "aaaa-bbbb")]}
+    assert find_stream_id_by_key(yt, "  aaaa-bbbb\n") == "s1"
+
+
+def test_find_stream_id_by_key_follows_pagination():
+    yt = _mock_youtube()
+    yt.liveStreams().list().execute.side_effect = [
+        {"items": [_stream("s1", "aaaa-bbbb")], "nextPageToken": "p2"},
+        {"items": [_stream("s2", "cccc-dddd")]},
+    ]
+    assert find_stream_id_by_key(yt, "cccc-dddd") == "s2"
+
+
+def test_find_stream_id_by_key_raises_when_missing():
+    yt = _mock_youtube()
+    yt.liveStreams().list().execute.return_value = {"items": [_stream("s1", "aaaa-bbbb")]}
+    with pytest.raises(ValueError, match="não encontrada"):
+        find_stream_id_by_key(yt, "zzzz-zzzz")
