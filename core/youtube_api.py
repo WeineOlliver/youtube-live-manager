@@ -163,14 +163,15 @@ def delete_broadcast(youtube, broadcast_id: str) -> None:
 
 def cleanup_resources(youtube, ids: dict) -> list[str]:
     """
-    Deletes the broadcast in ids["bc_id"], if present. The fixed RTMP stream is
-    never deleted. Returns a list of error strings (empty list = success).
+    Deletes the broadcasts in ids["bc_fhd_id"] / ids["bc_shorts_id"], if present.
+    The fixed RTMP streams are never deleted. Returns a list of error strings.
     """
     errors = []
-    broadcast_id = ids.get("bc_id")
-    if broadcast_id:
-        try:
-            delete_broadcast(youtube, broadcast_id)
-        except Exception as e:
-            errors.append(f"bc_id: {e}")
+    for key in ("bc_fhd_id", "bc_shorts_id"):
+        broadcast_id = ids.get(key)
+        if broadcast_id:
+            try:
+                delete_broadcast(youtube, broadcast_id)
+            except Exception as e:
+                errors.append(f"{key}: {e}")
     return errors

@@ -3,8 +3,9 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-# Kept in client-secret/ (git-ignored) so the RTMP key never gets committed.
+# Kept in client-secret/ (git-ignored) so the RTMP keys never get committed.
 STREAM_KEY_PATH = os.path.join(BASE_DIR, "client-secret", "stream_key.txt")
+STREAM_KEY_SHORTS_PATH = os.path.join(BASE_DIR, "client-secret", "stream_key_shorts.txt")
 
 DEFAULT_PROFILE = {
     "name": "Nova Live",
@@ -12,6 +13,9 @@ DEFAULT_PROFILE = {
     "description": "",
     "tags": "",
     "thumbnail_normal": "",
+    "thumbnail_shorts": "",
+    "enable_fhd": True,
+    "enable_shorts": True,
 }
 
 DEFAULT_CONFIG = {
@@ -47,14 +51,20 @@ def save_config(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_stream_key() -> str:
-    if not os.path.exists(STREAM_KEY_PATH):
+def _stream_key_path(kind: str) -> str:
+    return STREAM_KEY_SHORTS_PATH if kind == "shorts" else STREAM_KEY_PATH
+
+
+def load_stream_key(kind: str = "fhd") -> str:
+    path = _stream_key_path(kind)
+    if not os.path.exists(path):
         return ""
-    with open(STREAM_KEY_PATH, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return f.read().strip()
 
 
-def save_stream_key(key: str) -> None:
-    os.makedirs(os.path.dirname(STREAM_KEY_PATH), exist_ok=True)
-    with open(STREAM_KEY_PATH, "w", encoding="utf-8") as f:
+def save_stream_key(key: str, kind: str = "fhd") -> None:
+    path = _stream_key_path(kind)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         f.write(key.strip())

@@ -82,6 +82,16 @@ def test_save_stream_key_creates_parent_dir(tmp_path, monkeypatch):
     assert path.read_text(encoding="utf-8") == "abcd"
 
 
-def test_default_profile_has_no_shorts_fields():
-    assert "enable_shorts" not in DEFAULT_PROFILE
-    assert "thumbnail_shorts" not in DEFAULT_PROFILE
+def test_default_profile_has_shorts_fields():
+    assert DEFAULT_PROFILE["enable_shorts"] is True
+    assert DEFAULT_PROFILE["enable_fhd"] is True
+    assert DEFAULT_PROFILE["thumbnail_shorts"] == ""
+
+
+def test_shorts_stream_key_is_stored_separately(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.state.STREAM_KEY_PATH", str(tmp_path / "stream_key.txt"))
+    monkeypatch.setattr("core.state.STREAM_KEY_SHORTS_PATH", str(tmp_path / "stream_key_shorts.txt"))
+    save_stream_key("fhd-key")
+    save_stream_key("shorts-key", "shorts")
+    assert load_stream_key() == "fhd-key"
+    assert load_stream_key("shorts") == "shorts-key"

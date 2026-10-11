@@ -108,25 +108,34 @@ def test_delete_broadcast_calls_api():
     yt.liveBroadcasts.return_value.delete.return_value.execute.assert_called_once()
 
 
-def test_cleanup_resources_deletes_broadcast():
+def test_cleanup_resources_deletes_both_broadcasts():
     yt = _mock_youtube()
-    errors = cleanup_resources(yt, {"bc_id": "bc1"})
+    errors = cleanup_resources(yt, {"bc_fhd_id": "bc1", "bc_shorts_id": "bc2"})
     assert errors == []
-    yt.liveBroadcasts.return_value.delete.assert_called_once_with(id="bc1")
+    deleted = [c.kwargs["id"] for c in yt.liveBroadcasts.return_value.delete.call_args_list]
+    assert deleted == ["bc1", "bc2"]
+
+
+def test_cleanup_resources_skips_missing_keys():
+    yt = _mock_youtube()
+    errors = cleanup_resources(yt, {"bc_shorts_id": "bc2"})
+    assert errors == []
+    yt.liveBroadcasts.return_value.delete.assert_called_once_with(id="bc2")
 
 
 def test_cleanup_resources_never_deletes_stream():
     yt = _mock_youtube()
-    cleanup_resources(yt, {"bc_id": "bc1", "stream_id": "s1"})
+    cleanup_resources(yt, {"bc_fhd_id": "bc1", "stream_id": "s1"})
     assert yt.liveStreams.return_value.delete.call_count == 0
 
 
 def test_cleanup_resources_returns_errors_on_failure():
     yt = _mock_youtube()
     yt.liveBroadcasts.return_value.delete.return_value.execute.side_effect = Exception("quota")
-    errors = cleanup_resources(yt, {"bc_id": "bc1"})
-    assert len(errors) == 1
-    assert "bc_id" in errors[0]
+    errors = cleanup_resources(yt, {"bc_fhd_id": "bc1", "bc_shorts_id": "bc2"})
+    assert len(errors) == 2
+    assert "bc_fhd_id" in errors[0]
+    assert "bc_shorts_id" in errors[1]
 
 
 def test_cleanup_resources_empty_ids_returns_no_errors():

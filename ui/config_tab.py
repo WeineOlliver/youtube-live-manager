@@ -1,7 +1,7 @@
 """Reusable configuration tab widget."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QLineEdit, QPlainTextEdit, QFileDialog, QFrame
+    QCheckBox, QLineEdit, QPlainTextEdit, QFileDialog, QFrame
 )
 from PyQt6.QtCore import pyqtSignal
 
@@ -74,6 +74,9 @@ class ConfigTab(QWidget):
         layout.addWidget(_label("Título"))
         self._title_input = QLineEdit()
         layout.addWidget(self._title_input)
+        hint = QLabel('  ↳ Shorts: título + " | SHORTS" (automático)')
+        hint.setStyleSheet("color: #6b7280; font-size: 10px;")
+        layout.addWidget(hint)
         layout.addWidget(_label("Tags (separadas por vírgula)"))
         self._tags_input = QLineEdit()
         layout.addWidget(self._tags_input)
@@ -85,7 +88,8 @@ class ConfigTab(QWidget):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(4)
-        layout.addWidget(_title("🖼️ Thumbnail"))
+        layout.addWidget(_title("🖼️ Thumbnails"))
+        layout.addWidget(_label("Normal (Full HD)"))
         self._thumb_normal_input = QLineEdit()
         row1 = QHBoxLayout()
         row1.addWidget(self._thumb_normal_input)
@@ -94,6 +98,15 @@ class ConfigTab(QWidget):
         browse1.clicked.connect(lambda: self._browse_thumbnail(self._thumb_normal_input))
         row1.addWidget(browse1)
         layout.addLayout(row1)
+        layout.addWidget(_label("Shorts"))
+        self._thumb_shorts_input = QLineEdit()
+        row2 = QHBoxLayout()
+        row2.addWidget(self._thumb_shorts_input)
+        browse2 = QPushButton("Browse")
+        browse2.setFixedWidth(60)
+        browse2.clicked.connect(lambda: self._browse_thumbnail(self._thumb_shorts_input))
+        row2.addWidget(browse2)
+        layout.addLayout(row2)
         layout.addStretch()
         return frame
 
@@ -121,15 +134,25 @@ class ConfigTab(QWidget):
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(8)
         layout.addWidget(_title("🚀 Ações"))
-        
-        self._create_btn = QPushButton("Criar Live")
+
+        self._enable_fhd_toggle = QCheckBox("Incluir Full HD")
+        self._enable_fhd_toggle.setChecked(True)
+        layout.addWidget(self._enable_fhd_toggle)
+
+        self._enable_shorts_toggle = QCheckBox("Incluir Shorts")
+        self._enable_shorts_toggle.setChecked(True)
+        layout.addWidget(self._enable_shorts_toggle)
+
+        layout.addSpacing(4)
+
+        self._create_btn = QPushButton("Criar Lives")
         self._create_btn.setObjectName("create_btn")
         self._create_btn.setMinimumWidth(180)
         self._create_btn.setMinimumHeight(40)
         self._create_btn.clicked.connect(self._on_create)
         layout.addWidget(self._create_btn)
         
-        self._delete_btn = QPushButton("🗑️ Deletar Live de Teste")
+        self._delete_btn = QPushButton("🗑️ Deletar Lives de Teste")
         self._delete_btn.setObjectName("delete_btn")
         self._delete_btn.setMinimumWidth(180)
         self._delete_btn.setVisible(False)
@@ -156,7 +179,10 @@ class ConfigTab(QWidget):
         self._title_input.setText(data.get("title", ""))
         self._tags_input.setText(data.get("tags", ""))
         self._thumb_normal_input.setText(data.get("thumbnail_normal", ""))
+        self._thumb_shorts_input.setText(data.get("thumbnail_shorts", ""))
         self._desc_input.setPlainText(data.get("description", ""))
+        self._enable_fhd_toggle.setChecked(data.get("enable_fhd", True))
+        self._enable_shorts_toggle.setChecked(data.get("enable_shorts", True))
 
     def get_data(self) -> dict:
         return {
@@ -164,7 +190,10 @@ class ConfigTab(QWidget):
             "title": self._title_input.text(),
             "tags": self._tags_input.text(),
             "thumbnail_normal": self._thumb_normal_input.text(),
+            "thumbnail_shorts": self._thumb_shorts_input.text(),
             "description": self._desc_input.toPlainText(),
+            "enable_fhd": self._enable_fhd_toggle.isChecked(),
+            "enable_shorts": self._enable_shorts_toggle.isChecked(),
         }
 
     def get_config_for_worker(self) -> dict:
@@ -172,7 +201,9 @@ class ConfigTab(QWidget):
         data["tags"] = [t.strip() for t in data["tags"].split(",") if t.strip()]
         data["test_mode"] = self._global_config.get("test_mode", False)
         data["firefox_profile"] = self._global_config.get("firefox_profile", "")
-        data["stream_key"] = self._stream_key_provider()
+        keys = self._stream_key_provider()
+        data["stream_key"] = keys["fhd"]
+        data["stream_key_shorts"] = keys["shorts"]
         return data
 
     def append_log(self, line: str):
@@ -196,7 +227,7 @@ class ConfigTab(QWidget):
         self.status_changed.emit()
 
     def _restore_create_button(self):
-        self._create_btn.setText("Criar Live")
+        self._create_btn.setText("Criar Lives")
         self._create_btn.clicked.disconnect()
         self._create_btn.clicked.connect(self._on_create)
         self._create_btn.setEnabled(True)
@@ -216,7 +247,7 @@ class ConfigTab(QWidget):
         self.status_changed.emit()
 
     def _on_lives_created(self, ids: dict):
-        self.append_log("✅ Live criada com sucesso!")
+        self.append_log("✅ Lives criadas com sucesso!")
         self._pending_ids = ids
         self._restore_create_button()
         self.status_changed.emit()
@@ -226,7 +257,7 @@ class ConfigTab(QWidget):
         reply = QMessageBox.question(
             self,
             "Confirmar exclusão",
-            f"Tem certeza que deseja deletar a live de teste de '{self._profile_data['name']}'?",
+            f"Tem certeza que deseja deletar as lives de teste de '{self._profile_data['name']}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:

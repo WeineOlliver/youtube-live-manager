@@ -107,21 +107,11 @@ class MainWindow(QMainWindow):
         bar.addWidget(self._test_toggle)
         self._root.addLayout(bar)
 
-        # RTMP key row
-        key_row = QHBoxLayout()
-        key_row.setSpacing(8)
-        self._key_input = QLineEdit(load_stream_key())
-        self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("Cole aqui a chave de transmissão criada no YouTube Studio")
-        self._key_input.editingFinished.connect(self._on_key_changed)
-        self._key_eye_btn = QPushButton("👁")
-        self._key_eye_btn.setFixedWidth(32)
-        self._key_eye_btn.setCheckable(True)
-        self._key_eye_btn.toggled.connect(self._on_toggle_key_visibility)
-        key_row.addWidget(QLabel("Chave RTMP:"))
-        key_row.addWidget(self._key_input)
-        key_row.addWidget(self._key_eye_btn)
-        self._root.addLayout(key_row)
+        # RTMP key rows
+        self._key_inputs = {
+            "fhd": self._add_key_row("Chave RTMP Full HD:", "fhd"),
+            "shorts": self._add_key_row("Chave RTMP Shorts:", "shorts"),
+        }
 
         # Tabs
         self._tabs = QTabWidget()
@@ -143,12 +133,29 @@ class MainWindow(QMainWindow):
             self._tabs.setTabText(index, new_name)
             self._save_state()
 
-    def _on_key_changed(self):
-        save_stream_key(self._key_input.text())
+    def _add_key_row(self, label: str, kind: str) -> QLineEdit:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        key_input = QLineEdit(load_stream_key(kind))
+        key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        key_input.setPlaceholderText("Cole aqui a chave de transmissão criada no YouTube Studio")
+        key_input.editingFinished.connect(lambda: save_stream_key(key_input.text(), kind))
+        eye_btn = QPushButton("👁")
+        eye_btn.setFixedWidth(32)
+        eye_btn.setCheckable(True)
+        eye_btn.toggled.connect(lambda visible: key_input.setEchoMode(
+            QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        ))
+        title = QLabel(label)
+        title.setFixedWidth(130)
+        row.addWidget(title)
+        row.addWidget(key_input)
+        row.addWidget(eye_btn)
+        self._root.addLayout(row)
+        return key_input
 
-    def _on_toggle_key_visibility(self, visible: bool):
-        mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
-        self._key_input.setEchoMode(mode)
+    def _stream_keys(self) -> dict:
+        return {kind: inp.text() for kind, inp in self._key_inputs.items()}
 
     def _load_profiles(self):
         profiles = self._config.get("profiles", [])
@@ -161,7 +168,7 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentIndex(active_index)
 
     def _create_tab(self, profile_data: dict):
-        tab = ConfigTab(profile_data, self._config, self._key_input.text)
+        tab = ConfigTab(profile_data, self._config, self._stream_keys)
         tab.status_changed.connect(self._save_state)
         index = self._tabs.addTab(tab, profile_data.get("name", "Nova Live"))
         tab.update_test_mode(self._test_toggle.isChecked())
@@ -213,7 +220,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._save_state()
-        save_stream_key(self._key_input.text())
+        for kind, key in self._stream_keys().items():
+            save_stream_key(key, kind)
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if isinstance(tab, ConfigTab):
