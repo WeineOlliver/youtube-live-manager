@@ -1,6 +1,6 @@
 # 📺 YouTube Live Manager
 
-A powerful desktop application for managing YouTube live streams with an intuitive dashboard, automated polls, and YouTube API integration.
+A desktop application for creating YouTube live broadcasts (Full HD and Shorts) bound to fixed RTMP stream keys, with multiple saved profiles.
 
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-Latest-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
@@ -10,15 +10,14 @@ A powerful desktop application for managing YouTube live streams with an intuiti
 
 ## ✨ Features
 
-- 🎬 **YouTube API Integration** — Seamlessly connect to your YouTube channel
-- 📋 **Dashboard Management** — Configure livestream metadata with a user-friendly form
-  - Video title, tags, and description
-  - Thumbnail management (Full HD & Shorts formats)
-  - Custom poll questions and options
-- 🤖 **Poll Automation** — Automatically manage polls during livestreams
-- 💾 **State Persistence** — Save and load your configuration settings
-- 🧪 **Test Mode** — Safe testing with built-in test mode controls
-- ⚡ **Performance Optimized** — Responsive UI with background workers
+- 🎬 **YouTube API Integration** — Creates broadcasts on your channel via YouTube Data API v3
+- 🔑 **Fixed RTMP keys** — Each live type binds to a stream key you created once in YouTube Studio, so OBS settings never change
+  - Separate keys for Full HD and Shorts
+  - Keys are stored locally in `client-secret/` (git-ignored)
+- 📺 **Full HD + Shorts** — Create either or both in one click; Shorts gets its own thumbnail and a ` | SHORTS` title suffix
+- 🗂️ **Multiple profiles** — One tab per stream setup (title, tags, description, thumbnails), saved automatically
+- 🧪 **Test Mode** — Private, ultra-low-latency broadcasts plus a button to delete them afterwards
+- ⛔ **Cancel & rollback** — Cancelling or failing mid-way deletes the broadcasts already created (never the RTMP keys)
 
 ---
 
@@ -50,8 +49,11 @@ A powerful desktop application for managing YouTube live streams with an intuiti
 4. **Configure YouTube API**
    - Set up a Google API project at [Google Cloud Console](https://console.cloud.google.com/)
    - Enable the YouTube Data API v3
-   - Create OAuth 2.0 credentials
-   - Place your credentials in the appropriate location
+   - Create OAuth 2.0 credentials (Desktop app) and save the JSON in `client-secret/`
+
+5. **Create the RTMP keys in YouTube Studio**
+   - In YouTube Studio → Go live → Stream, create one reusable stream key for Full HD and another for Shorts
+   - Paste each one in the matching "Chave RTMP" field at the top of the app
 
 ---
 
@@ -72,41 +74,48 @@ This launches the YouTube Live Manager desktop application with the full dashboa
 youtube-live-manager/
 ├── main.py                 # Application entry point
 ├── requirements.txt        # Project dependencies
-├── config.json            # Default configuration template
-├── enhancements.md        # Feature roadmap & planned enhancements
+├── config.json             # Saved profiles and settings
+├── enhancements.md         # Feature roadmap & planned enhancements
+├── client-secret/          # OAuth credentials, token and RTMP keys (git-ignored)
 ├── core/
-│   ├── __init__.py
-│   ├── youtube_api.py     # YouTube API wrapper & integration
-│   ├── poll_automation.py # Poll automation logic
-│   └── state.py           # State management & persistence
+│   ├── youtube_api.py      # YouTube API wrapper (broadcasts, RTMP key lookup, cleanup)
+│   └── state.py            # Profiles, config and RTMP key persistence
 ├── ui/
-│   ├── __init__.py
-│   ├── main_window.py     # Main application window
-│   └── workers.py         # Background worker threads
+│   ├── main_window.py      # Main window: token status, test mode, RTMP keys, tabs
+│   ├── config_tab.py       # Per-profile tab (content, thumbnails, actions, log)
+│   └── workers.py          # Background threads that create/delete broadcasts
 └── tests/
-    ├── conftest.py        # Pytest configuration
-    ├── test_state.py      # State management tests
-    └── test_youtube_api.py # API integration tests
+    ├── test_state.py
+    ├── test_workers.py
+    └── test_youtube_api.py
 ```
 
 ---
 
 ## 🔧 Configuration
 
-The `config.json` file stores your livestream settings:
+The `config.json` file stores your profiles and global settings:
 
 ```json
 {
-  "title": "Your Stream Title",
-  "tags": "tag1, tag2, tag3",
-  "description": "Stream description",
-  "thumbnail_normal": "path/to/thumbnail.png",
-  "thumbnail_shorts": "path/to/shorts-thumbnail.png",
-  "poll_fullhd_question": "Your poll question",
-  "poll_fullhd_options": "Option 1\nOption 2\nOption 3",
-  "test_mode": true
+  "profiles": [
+    {
+      "name": "My Stream",
+      "title": "Your Stream Title",
+      "tags": "tag1, tag2, tag3",
+      "description": "Stream description",
+      "thumbnail_normal": "path/to/thumbnail.png",
+      "thumbnail_shorts": "path/to/shorts-thumbnail.png",
+      "enable_fhd": true,
+      "enable_shorts": true
+    }
+  ],
+  "active_profile_index": 0,
+  "test_mode": false
 }
 ```
+
+The RTMP keys are not stored here: they live in `client-secret/stream_key.txt` (Full HD) and `client-secret/stream_key_shorts.txt` (Shorts).
 
 ---
 
@@ -127,7 +136,6 @@ pytest --cov=core --cov=ui
 ## 🎯 Upcoming Features
 
 Check [enhancements.md](enhancements.md) for planned features and improvements, including:
-- Livestream deletion options in test mode
 - Abort functionality with log-based decision making
 
 ---
